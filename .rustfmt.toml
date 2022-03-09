@@ -1,0 +1,14 @@
+# https://github.com/rust-lang/rustfmt/blob/master/Configurations.md
+tab_spaces = 2
+max_width = 120
+fn_args_layout = "Compressed"
+reorder_imports = true
+reorder_modules = true
+newline_style = "Unix"
+use_small_heuristics = "Max"
+#use_small_heuristics = "Max"
+#merge_imports = true
+#imports_granularity = "Module"
+#blank_lines_upper_bound = 1
+#format_code_in_doc_comments = true
+#condense_wildcard_suffixes = true
