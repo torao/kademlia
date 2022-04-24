@@ -23,7 +23,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Format
-      run: cargo fmt --all
+      run: cargo fmt --all --check
   lint:
     runs-on: ubuntu-latest
     steps:

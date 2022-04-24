@@ -31,10 +31,12 @@ async fn join_unable_to_connect_to_bootstrap_nodes() {
   let addr = "127.0.0.1:0".parse().unwrap();
   let rt = RoutingTable::new(id, K);
   let mut server = Server::new(id, addr, rt).await.unwrap();
-  assert!(matches!(
-    server.join(&["127.0.0.1:0".parse().unwrap()], Duration::from_secs(1)).await,
-    Err(Error::Timeout { .. })
-  ));
+  let result = server.join(&["127.0.0.1:0".parse().unwrap()], Duration::from_secs(1)).await;
+  assert!(
+    matches!(result, Err(Error::Timeout { .. })) || matches!(result, Err(Error::Shutdown { .. })),
+    "{:?}",
+    result
+  );
 }
 
 #[tokio::test]
@@ -57,31 +59,20 @@ async fn join_timeout() {
 #[tokio::test]
 async fn join_empty_contacts_response() {
   init();
-  const N: usize = 1;
   const K: usize = 10;
 
   let id = Key::from_bytes(&[0x00]);
   let addr = "127.0.0.1:0".parse().unwrap();
   let rt = RoutingTable::new(id, K);
   let mut node = Server::new(id, addr, rt).await.unwrap();
-  let port = node.bind_address().port();
 
   // FIND_NODE に 0 件で応答する UDP ポートを開く
-  let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-  let bootstrap = socket.local_addr().unwrap();
-  tokio::spawn(async move {
-    let mut buf = [0u8; 0xFFFF];
-    let len = socket.recv(&mut buf).await.unwrap();
-    let msg = Message::<N>::from_bytes(&buf[..len]).unwrap();
-    assert!(matches!(msg, Message::FindNode(..)));
-    if let Message::FindNode(_peer_id, nonce, _target_id) = msg {
-      let id = Key::from_bytes(&[0x7F]);
-      let msg = Message::FoundNode(id, nonce, vec![]);
-      socket.send_to(&msg.to_bytes(), format!("127.0.0.1:{}", port)).await.unwrap();
-    }
-  });
+  let (bootstrap, handle) =
+    open_responding_with_found_node_with_empty_contacts(Key::from_bytes(&[0x80])).await.unwrap();
 
-  assert!(matches!(node.join(&[bootstrap], Duration::from_secs(5)).await, Err(Error::Routing { .. })));
+  let result = node.join(&[bootstrap], Duration::from_secs(5)).await;
+  handle.await.unwrap().unwrap();
+  assert!(matches!(result, Err(Error::Routing { .. })), "{:?}", result);
 }
 
 #[tokio::test]
@@ -107,12 +98,13 @@ async fn join_empty_contacts_response_with_timeout() {
     if let Message::FindNode(_peer_id, nonce, _target_id) = msg {
       let id = Key::from_bytes(&[0x7F]);
       let msg = Message::FoundNode(id, nonce, vec![]);
-      socket.send_to(&msg.to_bytes(), format!("127.0.0.1:{}", port)).await.unwrap();
       tokio::time::sleep(Duration::from_millis(1000)).await;
+      socket.send_to(&msg.to_bytes(), format!("127.0.0.1:{}", port)).await.unwrap();
     }
   });
 
-  assert!(matches!(node.join(&[bootstrap], Duration::from_secs(0)).await, Err(Error::Timeout { .. })));
+  let result = node.join(&[bootstrap], Duration::from_secs(0)).await;
+  assert!(matches!(result, Err(Error::Timeout { .. })), "{:?}", result);
   handler.await.unwrap();
   drop(node);
 }
