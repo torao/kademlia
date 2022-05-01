@@ -84,7 +84,7 @@ async fn join_empty_contacts_response() {
   assert!(matches!(node.join(&[bootstrap], Duration::from_secs(5)).await, Err(Error::Routing { .. })));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn join_empty_contacts_response_with_timeout() {
   init();
   const N: usize = 1;
