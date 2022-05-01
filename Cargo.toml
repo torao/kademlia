@@ -15,5 +15,12 @@ clap = { version = "3.1", features = ["derive"] }
 log = "0.4"
 env_logger = "0.9"
 
+# for main
+sha2 = "0.10"
+
+# for rustdoc
+embed-doc-image = "0.1"
+katexit = "0.1"
+
 [dev-dependencies]
 rand_chacha = "*"

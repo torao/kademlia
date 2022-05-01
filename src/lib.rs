@@ -1,13 +1,52 @@
-//! # Kademlia ルーティング
 //!
-//! Kademlia を使ったルーティングの実装です。
+//! この文書は [github.com/torao/kademlia](https://github.com/torao/kademlia) の API リファレンスです。
 //!
+//! `kademlia` ライブラリはあるキーに対応するノードを大規模な P2P ネットワークから探索するための分散ハッシュテーブル
+//! (DHT) アルゴリズムを実装しています。このアルゴリズムは、キー空間の大きさを $n$ としたときに最大 $\log_2 n$ 回の問い
+//! 合わせで目的のノードに到達することができます。これは、例えば IPv4 のような 32-bit キー空間を使用するケースで最悪でも
+//! 32 回のホップで目的のノードに到達することを意味します。
+//!
+//! ```toml
+//! [dependencies]
+//! kademlia = { git = "https://github.com/torao/kademlia" }
+//! tokio = { version = "1", features = ["full"] }
+//! ```
+//!
+//! このライブラリは Kademlia のリファレンス実装として構造や特性を学ぶことを目的としています。目的のための機能は十分に
+//! テストしていますが、構成のわかりやすさと Kademlia 論文の方針を優先しており、最高の効率を得るためにはさらなる改良が
+//! 必要と考えられます。したがって今のところ [crates.io](https://crates.io) に登録する予定はなく github から参照します。
+//!
+//! ### Build the Reference Implementation of KVS
+//!
+//! `main.rs` は `kademlia` ライブラリを使用した KVS のリファレンス実装です。
+//!
+//! ### Build Document
+//!
+//! ```text
+//! $ RUSTDOCFLAGS="--html-in-header katex-header.html" cargo doc --no-deps --open
+//! ```
+//!
+//! ## About Kademlia
+//!
+//! **Kademlia** は Maymounkov と Mazières による論文 ["Kademlia: A Peer-to-peer Information System Based on the XOR Metric"](chrome-extension://efaidnbmnnnibpcajpcglclefindmkaj/https://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf)
+//! (2002) で提案された分散ハッシュテーブル (DHT) アルゴリズムです。この `kademlia` ライブラリは Rust による Kademlia
+//! ルーティングの実装です。
+//!
+//! `kademlia` ライブラリは論文と以下の点で異なります。
+//!
+//! * キーや nonce 値の空間は 160-bit 固定ではなく (コード上に定数ジェネリクス `const N:usize` として現れる) 任意のバイト
+//!   長を使用できます。
+//! * KVS 実装を想定した `STORE` と `FIND_VALUE` メッセージを廃止し、より汎用化されたアプリケーション仕様のメッセージ
+//!   `APP_MESSAGE` を導入しています。アプリケーションは `APP_MESSAGE` を使って KVS を含む任意の RPC を実装することが
+//!   できます。このため KVS の動作として言及されていた "値が消えないように 1 時間おきに `STORE` メッセージを送信する"
+//!   といった動作は実装していません。
+//!
+#[cfg_attr(doc, katexit::katexit)]
 use rand::{thread_rng, Rng, RngCore};
 use std::fmt::{Debug, Display};
 use std::net::SocketAddr;
 use std::ops::BitXor;
 use std::time::Duration;
-use tokio::sync::mpsc::error::SendError;
 
 mod msg;
 mod routing_table;
@@ -269,9 +308,6 @@ pub enum Error {
 impl Error {
   fn server_has_been_shutdown() -> Error {
     Error::Shutdown { message: String::from("The server has already been shutdown") }
-  }
-  fn client_has_been_dropped<T>(_err: SendError<T>) -> Error {
-    Error::Shutdown { message: String::from("The client-receiver has already been dropped") }
   }
   fn client_has_been_dropped_oneshot<T>(_err: T) -> Error {
     Error::Shutdown { message: String::from("The client-receiver has already been dropped") }

@@ -75,7 +75,7 @@ async fn join_empty_contacts_response() {
   assert!(matches!(result, Err(Error::Routing { .. })), "{:?}", result);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn join_empty_contacts_response_with_timeout() {
   init();
   const N: usize = 1;

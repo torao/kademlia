@@ -1,4 +1,5 @@
 use crate::{AppCode, Contact, Error, Key, Message, NodeID, Result, RoutingTable};
+use embed_doc_image::embed_doc_image;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::{Debug, Display};
 use std::future::Future;
@@ -22,7 +23,7 @@ struct Command<const N: usize> {
 enum CommandOpt<const N: usize> {
   Join(Vec<SocketAddr>, Sender<Result<Vec<Contact<N>>>>),
   FindNode(NodeID<N>, Sender<Result<Vec<Contact<N>>>>),
-  AppCall(Contact<N>, Key<N>, Vec<u8>, Sender<Result<()>>),
+  AppCall(Contact<N>, Key<N>, Vec<u8>, Sender<Result<Contact<N>>>),
   Shutdown(Sender<Result<()>>),
 }
 
@@ -33,8 +34,13 @@ pub struct AppMsg<const N: usize> {
   pub value: Vec<u8>,
 }
 
-/// `Server` はそのスコープで Kademlia サーバの開始と終了を表します。
+/// Kademlia サーバは背後で動作するメッセージループスレッドのアプリケーションインターフェースです。
 ///
+/// ![Server Structure][server-structure]
+///
+/// サーバ機能を終了するには、`Server` インスタンスのスコープを終了させるか、明示的に [`Server::shutdown()`] を呼び出します。
+///
+#[embed_doc_image("server-structure", "assets/server-structure.png")]
 #[derive(Debug)]
 pub struct Server<const N: usize> {
   /// この Kademlia ノードのコンタクト情報です。
@@ -109,12 +115,17 @@ impl<const N: usize> Server<N> {
     &self.contact
   }
 
-  /// 指定されたブートストラップノードのアドレスを起点に、このノード自身を検索することで経路中継するノードにこのノードの
-  /// コンタクト情報をキャッシュさせます。
+  /// このノードのコンタクト情報を Kademlia ネットワークにキャッシュさせる目的で、指定されたブートストラップノードの
+  /// アドレスを起点にこのノード自身を検索します。この動作により検索を中継するノードにはこのノードのコンタクト情報が
+  /// キャッシュされます。
   ///
   /// いずれのブートストラップノードからの検索もタイムアウトした場合に [`Timeout`](Error::Timeout) を返します。これは
   /// ブートストラップノードが応答しなかったケースだけではなく、経路を中継するいずれかのノードが応答しなかったケースも
   /// 含みます。
+  ///
+  /// # Parameters
+  /// - `bootstrap_addrs` - ブートストラップノードのアドレス
+  /// - `timeout` - タイムアウト
   ///
   /// # Return
   /// - `Vec<Contact<N>>` - 1 つ以上のブートストラップノードからこのサーバの検索が成功した場合、このサーバに近い順の別の
@@ -122,8 +133,8 @@ impl<const N: usize> Server<N> {
   ///
   /// # Errors
   /// - [`Timeout`](Error::Timeout) - すべてのブートストラップノードからの応答がタイムアウトした。
-  /// - [`Routing`](Error::Rouoting) - 指定されたブートストラップアドレスが空の場合、またはノード探索に失敗した場合。
-  /// - [`Shutdown`](Error::Shutdown) - サーバはすでに[シャットダウン](Server::shutdown())されている。
+  /// - [`Routing`](Error::Routing) - 指定されたブートストラップアドレスが空の場合、またはノード探索に失敗した場合。
+  /// - [`Shutdown`](Error::Shutdown) - サーバがすでに[シャットダウン](Server::shutdown())されている。
   ///
   pub async fn join(&mut self, bootstrap_addrs: &[SocketAddr], timeout: Duration) -> Result<Vec<Contact<N>>> {
     if bootstrap_addrs.is_empty() {
@@ -133,12 +144,45 @@ impl<const N: usize> Server<N> {
     Self::command("join", CommandOpt::Join(bootstrap_addrs.to_vec(), tx), timeout, &mut self.tx, rx).await
   }
 
-  pub async fn find_node(&mut self, id: NodeID<N>, timeout: Duration) -> Result<Vec<Contact<N>>> {
+  /// 指定された `key` に最も近いノードのコンタクト情報を Kademlia ネットワークから検索し、近い順にソートされたリストを
+  /// 返します。返値のコンタクト情報は少なくとも 1 つのエントリが含まれていることを保証します。
+  ///
+  /// # Parameters
+  /// - `key` - Kademlia ネットワークから検索するノードのキー
+  /// - `timeout` - 検索のタイムアウト
+  ///
+  /// # Return
+  /// - `Vec<Contact<N>>` - `key` に近い順にソートされたコンタクト情報
+  ///
+  /// # Errors
+  /// - [`Timeout`](Error::Timeout) - 検索がタイムアウトした場合。
+  /// - [`Routing`](Error::Routing) - ノード探索に失敗した場合。
+  /// - [`Shutdown`](Error::Shutdown) - サーバがすでに[シャットダウン](Server::shutdown())されている。
+  ///
+  pub async fn find_node(&mut self, key: NodeID<N>, timeout: Duration) -> Result<Vec<Contact<N>>> {
     let (tx, rx) = channel(1);
-    Self::command("find_node", CommandOpt::FindNode(id, tx), timeout, &mut self.tx, rx).await
+    Self::command("find_node", CommandOpt::FindNode(key, tx), timeout, &mut self.tx, rx).await
   }
 
-  pub async fn app_call(&mut self, peer: Contact<N>, key: Key<N>, value: Vec<u8>, timeout: Duration) -> Result<()> {
+  ///
+  /// # Parameters
+  /// - `key` - メッセージの対象となるキー
+  /// - `value` - メッセージとして送信するバイナリ
+  /// - `timeout` - 応答のタイムアウト
+  ///
+  /// # Return
+  /// - `Contact<N>` - 実際に `APP_MESSAGE` を送信したノード
+  ///
+  /// # Errors
+  /// - [`Timeout`](Error::Timeout) - 応答がタイムアウトした場合。
+  /// - [`Routing`](Error::Routing) - ノード探索に失敗した場合。
+  /// - [`Shutdown`](Error::Shutdown) - サーバがすでに[シャットダウン](Server::shutdown())されている。
+  /// - [`AppNotFound`](Error::AppNotFound) - 送信先のピアに `APP_MESSAGE` を受信するアプリケーションが存在しない。
+  ///
+  pub async fn app_call(
+    &mut self, peer: Contact<N>, key: Key<N>, value: Vec<u8>, timeout: Duration,
+  ) -> Result<Contact<N>> {
+    // TODO: value のサイズによってメッセージが UDP パケットサイズを超えないか確認
     let (tx, rx) = channel(1);
     Self::command("find_node", CommandOpt::AppCall(peer, key, value, tx), timeout, &mut self.tx, rx).await
   }
@@ -249,7 +293,9 @@ impl<const N: usize> MessageLoop<N> {
           // メッセージを受信したときの処理
           match result {
             Ok((len, addr)) => {
-              self.react(&mut socket, addr, &buffer[..len], &mut app_tx).await?;
+              if let Err(err) = self.react(&mut socket, addr, &buffer[..len], &mut app_tx).await {
+                log::error!("{:?}", err);
+              }
             }
             Err(err) => {
               log::error!("{}: {:?}", self.id, err);
@@ -258,6 +304,7 @@ impl<const N: usize> MessageLoop<N> {
         }
       }
     };
+    drop(app_tx);
     drop(socket);
     if let Some(tx) = tx {
       let _ = tx.send(Ok(())).await;
@@ -330,7 +377,7 @@ impl<const N: usize> MessageLoop<N> {
         peer_id
       }
       Message::AppResponse(peer_id, nonce, code) => {
-        self.react_app_response(peer_id, nonce, code).await?;
+        self.react_app_response(peer_id, addr, nonce, code).await?;
         peer_id
       }
     };
@@ -437,7 +484,7 @@ impl<const N: usize> MessageLoop<N> {
     }
 
     // より近いノードに FIND_NODE を送信する
-    log::info!("{}: redirect: {:?}", self.id, contact);
+    log::info!("{}: [{}] redirect: {:?}", self.id, hop, contact);
     let nonce = self.sessions.begin_find_node(deadline, &target_id, hop + 1, tx);
     let find_node = Message::<N>::FindNode(self.id, nonce, target_id);
     self.send(socket, find_node, &contact.address).await?;
@@ -467,7 +514,7 @@ impl<const N: usize> MessageLoop<N> {
     }
 
     // より近いノードに APP_MESSAGE を送信する
-    log::info!("{}: redirect: {:?}", self.id, contact);
+    log::info!("{}: [{}] redirect: {:?}", self.id, hop, contact);
     let nonce = self.sessions.begin_app_call(deadline, key, value.clone(), hop + 1, tx);
     let app_msg = Message::<N>::AppMessage(self.id, nonce, key, value);
     self.send(socket, app_msg, &contact.address).await?;
@@ -527,8 +574,14 @@ impl<const N: usize> MessageLoop<N> {
 
     // アプリ呼び出し
     if let Some(tx) = app_tx {
-      tx.send(msg.clone()).await.map_err(Error::client_has_been_dropped)?;
-      let app_response = Message::<N>::AppResponse(self.id, nonce, Message::<N>::APP_RESPONSE_OK);
+      let code = match tx.send(msg.clone()).await {
+        Ok(()) => Message::<N>::APP_RESPONSE_OK,
+        Err(err) => {
+          log::warn!("client receiver for APP_MESSAGE has been dropped: {:?}", err);
+          Message::<N>::APP_RESPONSE_NOT_FOUND
+        }
+      };
+      let app_response = Message::<N>::AppResponse(self.id, nonce, code);
       self.send(socket, app_response, &msg.source.address).await?;
     } else {
       let app_response = Message::<N>::AppResponse(self.id, nonce, Message::<N>::APP_RESPONSE_NOT_FOUND);
@@ -539,7 +592,9 @@ impl<const N: usize> MessageLoop<N> {
 
   /// `APP_RESPONSE` 応答の処理を行います。
   ///
-  async fn react_app_response(&mut self, peer_id: NodeID<N>, nonce: Key<N>, code: AppCode) -> Result<()> {
+  async fn react_app_response(
+    &mut self, peer_id: NodeID<N>, peer_addr: SocketAddr, nonce: Key<N>, code: AppCode,
+  ) -> Result<()> {
     if let Some(Task(deadline, spec)) = self.sessions.get(&nonce) {
       if Instant::now() >= *deadline {
         // 時間制限を超過している場合は何もしない
@@ -548,7 +603,7 @@ impl<const N: usize> MessageLoop<N> {
         // 呼び出しの応答を通知
         let AppCallTask(_key, _value, _hop, tx) = &task;
         tx.send(match code {
-          Message::<N>::APP_RESPONSE_OK => Ok(()),
+          Message::<N>::APP_RESPONSE_OK => Ok(Contact::new(peer_id, peer_addr)),
           Message::<N>::APP_RESPONSE_NOT_FOUND => Err(Error::AppNotFound { peer: peer_id.to_string() }),
           _ => Err(Error::UnknowAppResponse(code)),
         })
@@ -570,7 +625,7 @@ impl<const N: usize> MessageLoop<N> {
   /// 応答待ちでタイムアウトしているタスクを除去しタスクの終了処理を行います。
   ///
   async fn purge(&mut self, socket: &mut UdpSocket) -> Result<()> {
-    self.debug("purge()");
+    self.trace("purge()");
 
     // 応答待ちでタイムアウトしたジョブを除去
     let tasks = self.sessions.purge();
@@ -633,6 +688,9 @@ impl<const N: usize> MessageLoop<N> {
   fn debug<T: Display>(&self, msg: T) {
     log::debug!("{}@{}: {}", self.id, self.address, msg);
   }
+  fn trace<T: Display>(&self, msg: T) {
+    log::trace!("{}@{}: {}", self.id, self.address, msg);
+  }
 }
 
 /// 進行中の [`Task`] を保存するセッションです。
@@ -681,7 +739,7 @@ impl<const N: usize> Session<N> {
   }
 
   pub fn begin_app_call(
-    &mut self, deadline: Instant, key: Key<N>, value: Vec<u8>, hop: usize, tx: Sender<Result<()>>,
+    &mut self, deadline: Instant, key: Key<N>, value: Vec<u8>, hop: usize, tx: Sender<Result<Contact<N>>>,
   ) -> Key<N> {
     let task = Task(deadline, TaskSpecData::AppCall(AppCallTask(key, value, hop, tx)));
     self.register(deadline, task)
@@ -774,4 +832,4 @@ enum TaskSpecData<const N: usize> {
 }
 
 struct FindNodeTask<const N: usize>(NodeID<N>, usize, Sender<Result<Vec<Contact<N>>>>);
-struct AppCallTask<const N: usize>(Key<N>, Vec<u8>, usize, Sender<Result<()>>);
+struct AppCallTask<const N: usize>(Key<N>, Vec<u8>, usize, Sender<Result<Contact<N>>>);
