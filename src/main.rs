@@ -148,8 +148,8 @@ async fn input_loop(
 /// キーに対応するノードを検索して表示します。
 ///
 async fn find(server: &Arc<Mutex<Server<N>>>, args: Vec<String>) -> Result<()> {
-  for i in 0..args.len() {
-    let key = str_to_key(&args[i]);
+  for arg in &args {
+    let key = str_to_key(arg);
     let mut server = server.lock().await;
     match server.find_node(key, Duration::from_secs(3)).await {
       Ok(contacts) => {
@@ -174,7 +174,7 @@ async fn put(server: &Arc<Mutex<Server<N>>>, args: Vec<String>, rx: &mut Receive
   }
   let name = &args[0];
   let value = &args[1];
-  let key = str_to_key(&name);
+  let key = str_to_key(name);
   let peer = {
     let mut server = server.lock().await;
     server.find_node(key, Duration::from_secs(3)).await?.remove(0)
@@ -204,7 +204,7 @@ async fn get(server: &Arc<Mutex<Server<N>>>, args: Vec<String>, rx: &mut Receive
     return Err(Error::Cmd(format!("get 引数が不正です: {:?}", args)));
   }
   let name = &args[0];
-  let key = str_to_key(&name);
+  let key = str_to_key(name);
   let peer = {
     let mut server = server.lock().await;
     server.find_node(key, Duration::from_secs(3)).await?.remove(0)
