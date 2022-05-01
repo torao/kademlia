@@ -206,11 +206,7 @@ fn x_add() {
 
 #[test]
 fn error() {
-  let errors = vec![
-    Error::server_has_been_shutdown(),
-    Error::client_has_been_dropped(tokio::sync::mpsc::error::SendError("")),
-    Error::client_has_been_dropped_oneshot(""),
-  ];
+  let errors = vec![Error::server_has_been_shutdown(), Error::client_has_been_dropped_oneshot("")];
   for err in &errors {
     assert!(matches!(err, Error::Shutdown { .. }));
   }
